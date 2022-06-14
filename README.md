@@ -1,7 +1,8 @@
 # Thesis Code BAM22
 Master Thesis Business Analytics &amp; Management 2022
 
-## Github repository for thesis code with no data (excluding data cleaning and exploration)
+## Github repository for thesis code
+Exludes data, data cleaning and exploration
 ### Description of each script (ordered by run order):
 
 *  **Data exploration**: Splits training and test sets based on created date and computes summary statistics of each set. 
