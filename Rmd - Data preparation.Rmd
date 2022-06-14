@@ -1,0 +1,89 @@
+---
+title: "Data Preparation"
+output: pdf_document
+date: '2022-06-14'
+---
+
+## Data loading and cleaning removed from the code
+## Mostly done by case company
+## Code starts after loading the prepared data set
+
+```{r}
+# downloading libraries
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+library(knitr)
+library(Matrix)
+library(caret)
+library(pROC)
+library(xgboost)
+library(DiagrammeR)
+library(doParallel)
+library(gridExtra)
+library(reshape2)
+library(MLmetrics)
+```
+
+## Split testing and training 
+
+```{r}
+# around 70% for training and 30% for testing 
+# 70% of 15 months is approx 10 months 
+# jan to oct for training 
+# nov to march for testing 
+split = as.Date("2021-10-31")
+
+Xtrain = X[Createddate<=split,]
+Xtest = X[Createddate>split,]
+
+Ytrain = Y[Createddate<=split]
+Ytest = Y[Createddate>split]
+
+# Results are 4 different data sets: Xtrain, Xtest, Ytrain and Ytest
+```
+
+
+
+## Train-test exploration 
+
+```{r}
+# summary statistics of training and testing 
+summary(factor(Ytrain))
+summary(factor(Ytest))
+
+summary(Ytrain)
+summary(Ytest)
+
+# sd
+sd(Ytrain)
+sd(Ytest)
+
+# difference in mean
+mean(Ytrain)-mean(Ytest)
+
+# standard error of the mean
+stderror <- function(x) sd(x)/sqrt(length(x))
+stderror(Ytrain)
+stderror(Ytest)
+```
+
+```{r}
+# Difference between training and testing set
+
+# the null hypothesis (H0) is that there is no difference between the two means
+# An “alternative hypothesis” (H1) is that there is a difference between the two means
+
+# Wilcoxon test 
+wilcox.test(Ytrain,Ytest, alternative = "two.sided")
+# does not assume normal distribution 
+# not statistically significant, failed to reject null hypothesis
+# no difference between the two means 
+
+# t-test
+stats::t.test(Ytrain,Ytest)
+# generally assumes normal distribution but it has been shown that t-test can tolerate deviations from normality when two distributions are moderarely skewed in the same direction 
+# not statistically significant, failed to reject null hypothesis
+# no difference between the two means 
+```

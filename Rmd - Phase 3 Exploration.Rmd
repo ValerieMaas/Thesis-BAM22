@@ -1,0 +1,520 @@
+---
+title: "Phase 3 Exploration"
+output: pdf_document
+date: '2022-06-14'
+---
+
+# =================== PHASE 3 MULTI-ARMED BANDIT PROBLEM =================== 
+
+## Data 
+
+### Create simulated data Y1
+
+```{r}
+# Ouput vector Y is transformed in Y1 with some extra 1s based on a feature 
+# The observations that with the 10% highest values of wm_preview_started (chosen arbitrarily) are 
+# converted from 0 to 1
+
+# original distribution of Y
+summary(factor(Y))
+
+# observations given wm_preview_started > 0
+sum(X[,283] > 0)
+
+# distribution of Y given wm_preview_started > 0
+summary(factor(Y)[X[,283] > 0])
+
+# convert observations Y=0 given wm_preview_started > 0 to 1
+conditionMetIdx = X[,283] > 0
+Y1 = Y
+Y1[conditionMetIdx] = 1
+
+# sanity check 
+summary(factor(Y1))
+```
+
+### Train and test split 
+
+```{r}
+# Split Y1 in train and test set 
+Y1train = Y1[Createddate<=split]
+Y1test = Y1[Createddate>split]
+```
+
+Results are 6 different data sets - Xtrain, Xtest, Ytrain, Ytest, Y1train and Ytest 
+
+### Data exploration
+
+```{r}
+summary(factor(Ytrain))
+summary(factor(Y1train))
+
+summary(factor(Ytest))
+summary(factor(Y1test))
+```
+
+```{r}
+# summary statistics of training and testing 
+summary(Y1train)
+summary(Y1test)
+
+
+# sd
+sd(Y1train)
+sd(Y1test)
+
+# diff:
+mean(Y1train)-mean(Y1test)
+
+# standard error of the mean
+stderror(Y1train)
+stderror(Y1test)
+```
+
+## Retrain XGBoost on simulated training set
+
+### Training set optimisation
+
+#### Cross-validation 
+
+```{r}
+CVerrors.B <- numeric(10)
+NROUNDS.B <- integer(10)
+```
+
+```{r}
+# use cv to select the correct hyperparameters
+# gamma, lambda, subsample, colsample_bytree and min_child_weight are default values
+
+# eta = set to 0.01
+# smaller values of shrinkage (almost) always give improved predictive performance
+# for 3,000 to 10,000 iterations with shrinkage rates between 0.01 and 0.001.
+
+# tuning for only tree depth and number of rounds
+for(depth in 1L:10L){ # tree depth between 1 and 3
+  mCV.B <- xgb.cv(data = Xtrain, 
+                label = Y1train, 
+                params = list(eta=eta, # shrinkage parameter (learning rate) 
+                              max_depth=depth), 
+                nrounds=10000000, # max number of trees 
+                objective = "binary:logistic",
+                eval_metric = "logloss",  # evaluation metric
+                nfold = 10, # k-folds 
+                early_stopping_rounds = 50, # algorithm stops if no more improvement
+                verbose = 0) # silent 
+  # calculate CVerror and number of rounds for each depth 
+  CVerrors.B[depth] <- min(mCV.B$evaluation_log$test_logloss_mean) 
+  NROUNDS.B[depth] <- mCV.B$best_iteration
+}
+```
+
+```{r}
+# plot 
+# training vs test errors
+cv_df.B <- data.frame(TRAINING_ERROR.B = mCV.B$evaluation_log$train_logloss_mean,
+                    VALIDATION_ERROR.B = mCV.B$evaluation_log$test_logloss_mean, 
+                    ITERATION.B = mCV.B$evaluation_log$iter) %>%
+  mutate(MIN = VALIDATION_ERROR.B == min(VALIDATION_ERROR.B))
+
+
+cv_df_longer.B <- pivot_longer(data = cv_df.B, 
+                              cols = c(TRAINING_ERROR.B, VALIDATION_ERROR.B), 
+                              names_to = "ERROR_TYPE.B",
+                              values_to = "ERROR.B")
+
+g.B <- ggplot(cv_df_longer.B, aes(x = ITERATION.B)) +        # Check for overfitting
+  geom_line(aes(y = ERROR.B, group = ERROR_TYPE.B, colour = ERROR_TYPE.B)) +
+  geom_vline(xintercept = mCV.B$best_iteration, colour = " dark blue") +
+  labs(
+    x = "Iterations",
+    y = "Error")+
+  scale_colour_discrete(name="Error type", 
+                        labels=c("Training error", "Validation error")) +
+  theme_classic() +
+  theme(legend.position="bottom")
+g.B
+```
+
+```{r}
+# select tuning parameters 
+best_d.B <- which.min(CVerrors.B) # choose depth for lowest cv error
+best_nrounds.B <- NROUNDS[best_d.B] # choose nrounds for lowest cv error
+```
+
+#### Training the model 
+
+```{r}
+# Training
+# XGBoost with Xtrain and Y1train 
+best_model_Y1.B <- xgboost(data = Xtrain,
+             label = Y1train,  # on simulated training set 
+             params = list(eta=eta, 
+                           max_depth=best_d.B),
+             nrounds=ceiling(best_nrounds.B*1.1), 
+             objective = "binary:logistic",
+             eval_metric = "logloss",
+             verbose = 0)
+```
+
+#### Tune classification threshold on training set
+
+```{r}
+# predictions on training set 
+training_predictions.B <- predict(best_model_Y1.B, Xtrain)
+summary(training_predictions.B)
+```
+
+```{r}
+# Precision 
+precision_score.B <- sapply(seq(0.01, 0.99, by=.01), function(thresh) Precision(Y1train, 
+                    ifelse(training_predictions.B >= thresh, 1, 0), positive = 1))
+
+# Recall
+recall_score.B <- sapply(seq(0.01, 0.99, by=.01), function(thresh) Recall(Y1train, 
+                    ifelse(training_predictions.B >= thresh, 1, 0), positive = 1))
+```
+
+```{r}
+# F1
+f1_scores.B <- sapply(seq(0.01, 0.99, by=.01), function(thresh) F1_Score(Y1train, 
+                    ifelse(training_predictions.B >= thresh, 1, 0), positive = 1))
+ 
+which.max(f1_scores.B) 
+```
+
+```{r}
+# F2
+f_beta_scores2.B <- sapply(seq(0.01, 0.99, by=.01), function(thresh) FBeta_Score(Y1train, 
+                    ifelse(training_predictions.B >= thresh, 1, 0), 
+                    positive = 1, beta = 2))
+ 
+which.max(f_beta_scores2.B) 
+```
+
+```{r}
+f_beta_scores0.5.B <- sapply(seq(0.01, 0.99, by=.01), function(thresh) FBeta_Score(Y1train, 
+                    ifelse(training_predictions.B >= thresh, 1, 0), 
+                    positive = 1, beta = 0.5))
+ 
+which.max(f_beta_scores0.5.B) 
+```
+
+```{r}
+# plot every threshold for training set
+# in one data frame
+f_scores.df.B <- as.data.frame(precision_score.B)
+f_scores.df.B$Recall <- recall_score.B
+f_scores.df.B$F1 <- f1_scores.B
+f_scores.df.B$F2 <- f_beta_scores2.B
+f_scores.df.B$F0.5 <- f_beta_scores0.5.B
+f_scores.df.B$threshold <- seq(0.01, 0.99, by=.01)
+f_scores.df.B <- f_scores.df.B %>% 
+  rename(
+    Precision = precision_score.B
+    )
+```
+
+```{r}
+df2.B <- melt(data = f_scores.df.B, id.vars = "threshold")
+
+p <- ggplot(data = df2.B, aes(x = threshold, y = value, colour = variable)) + 
+  geom_line() +
+  theme_classic() +
+  ylab("Value") + xlab("Classification threshold") +
+  theme(legend.title=element_text(size=20),
+        legend.text =element_text(size=15),
+        axis.title = element_text(size=20),
+        axis.text = element_text(size=15)) 
+
+update_labels(p, list(colour="Metric"))
+```
+
+##### Obtain metrics on the training set 
+
+```{r}
+Precision(Y1train, 
+          ifelse(training_predictions.B >= (which.max(f_beta_scores2.B)/100), 1, 0), 
+          positive = "1")
+Recall(Y1train, 
+       ifelse(training_predictions.B >= (which.max(f_beta_scores2.B)/100), 1, 0), 
+       positive = "1")
+F1_Score(Y1train, 
+         ifelse(training_predictions.B >= (which.max(f_beta_scores2.B)/100), 1, 0), 
+         positive = "1")
+FBeta_Score(Y1train, 
+            ifelse(training_predictions.B >= (which.max(f_beta_scores2.B)/100), 1, 0), 
+            positive = "1", beta=2)
+```
+
+#### Set classification threshold 
+
+```{r}
+# get binary predictions 
+threshold.B <- which.max(f_beta_scores2.B)/100
+```
+
+### Test set performance 
+
+#### Predict on test set
+
+```{r}
+# Predictions
+# Predict based on the best model Y1
+out_Y1.B <- predict(best_model_Y1.B, newdata = Xtest)
+
+# collecting the predictions in a dataframe 
+# prediction are the probability of the lead converting into a qualified opportunity (lead conversion rate)
+df.out_Y1.B <- data.frame(id=as.integer(rownames(Xtest)),
+                        Prediction_Score.B=out_Y1.B)
+
+# summary statistics of the predictions
+summary(df.out_Y1.B$Prediction_Score.B)
+```
+
+#### Evaluate performance 
+
+##### AUC-ROC
+
+```{r}
+# plot roc curve 
+par(pty = "s")
+roc_object_XGB.B <- roc(Y1test, df.out_Y1.B$Prediction_Score.B, plot = TRUE, print.auc=TRUE,
+                       col="brown2")
+```
+
+##### Confusion matrix, recall, precision, F2
+
+```{r}
+# get binary predictions 
+XGB_bin_pred.B <- ifelse(df.out_Y1.B$Prediction_Score.B > threshold.B, 1, 0)
+```
+
+```{r}
+# get confusion matrix 
+confusionMatrix(factor(XGB_bin_pred.B), factor(Y1test), positive = "1")
+```
+
+```{r}
+# confusion matrix in percentages
+prop.table(caret::confusionMatrix(factor(XGB_bin_pred.B), factor(Y1test), positive="1")$table)
+```
+
+```{r}
+# get precision, recall and F2 beta score on test set
+Precision(y_pred=XGB_bin_pred.B, y_true=Y1test, positive="1")
+Recall(y_pred=XGB_bin_pred.B, y_true=Y1test, positive="1")
+F1_Score(y_pred=XGB_bin_pred.B, y_true=Y1test, positive="1")
+FBeta_Score(y_pred=XGB_bin_pred.B, y_true=Y1test, positive="1", beta=2)
+```
+
+## BMA on simulated test data 
+
+### Collect predictions 
+
+```{r}
+# collect both predictions and actual outcomes in one data frame
+b2_m <- df.out_Y1.B
+b2_m <- data.frame(id=as.integer(rownames(Xtest)),
+                    XGB.B=out_Y1.B, 
+                    Mpred=m, 
+                    Y1_act=Y1test)
+```
+
+### Evaluate performance on simulated test data 
+
+#### Manual model confusion matrix 
+
+```{r}
+# Confuson matrix of manual score 
+confusionMatrix(factor(m), factor(Y1test),  positive = "1")
+
+# confusion matrix in percentages
+prop.table(caret::confusionMatrix(factor(m), factor(Y1test), positive="1")$table)
+```
+
+#### Conversion rates 
+
+```{r}
+# conversion rate
+# manual 
+manual_pred.B <- sum(b2_m$Mpred == 1)
+
+manual_conv.B <- sum(b2_m$Mpred == 1 & 
+                        b2_m$Y1_act == 1)
+
+manual_conv_rate.B <- manual_conv.B/manual_pred.B
+```
+
+```{r}
+# XGB.B
+XGB_pred.B <- sum(b2_m$XGB.B > threshold.B) 
+
+XGB_conv.B <- sum(b2_m$XGB.B > threshold.B & 
+                       b2_m$Y1_act == 1)
+
+# conversion rate
+XGB_conv_rate.B <- XGB_conv.B/XGB_pred.B
+```
+
+### Determine weights based on conversion rates
+
+```{r}
+weight_Manual.B <- manual_conv_rate.B/(manual_conv_rate.B + XGB_conv_rate.B)
+weight_XGB.B <- XGB_conv_rate.B/(manual_conv_rate.B + XGB_conv_rate.B)
+
+# sanity check
+weight_Manual.B 
+weight_XGB.B
+weight_Manual.B + weight_XGB.B
+```
+
+### Weighted prediction
+
+```{r}
+# in a for loop
+for(i in 1:nrow(b2_m)) {
+  b2_m$BMA_prediction.B[i] <- (weight_Manual.B * b2_m$Mpred[i]) + 
+    (weight_XGB.B * b2_m$XGB.B[i])
+}
+```
+
+### Performance of the BMA model 
+
+#### AUC-ROC
+
+```{r}
+# plot roc curve 
+par(pty = "s")
+roc_BMA_Y1 <- roc(Y1test, b2_m$BMA_prediction.B, plot = TRUE, print.auc=TRUE,
+                       col="brown2")
+```
+
+#### Confusion matrix, recall, precision, F2
+
+```{r}
+BMA_bin_pred.B <- ifelse(b2_m$BMA_prediction.B > threshold.B, 1, 0)
+```
+
+```{r}
+# get confusion matrix 
+confusionMatrix(factor(BMA_bin_pred.B), factor(Y1test), positive = "1")
+```
+
+```{r}
+# get precision, recall and F2 beta score on test set
+Precision(y_pred=BMA_bin_pred.B, y_true=Y1test, positive="1")
+Recall(y_pred=BMA_bin_pred.B, y_true=Y1test, positive="1")
+F1_Score(y_pred=BMA_bin_pred.B, y_true=Y1test, positive="1")
+FBeta_Score(y_pred=BMA_bin_pred.B, y_true=Y1test, positive="1", beta=2)
+```
+
+## Exploration rate to the BMA model 
+
+### Add exploration rate 
+
+```{r}
+# insert exploration rate 
+b2_m$Y_pred.B <- 0
+
+# in a for loop
+set.seed(36459)
+for(i in 1:nrow(b2_m)) {
+  if (rbinom(n=1, size=1, prob=0.1) == 1) { 
+    b2_m$Y_pred.B[i] = 1
+  } else {
+    b2_m$Y_pred.B[i] = b2_m$BMA_prediction.B[i]
+  }
+}
+```
+
+```{r}
+# sanity check 
+summary(b2_m$Y_pred.B)
+```
+
+### Evaluate performance 
+
+#### AUC-ROC 
+
+```{r}
+# plot roc curve
+par(pty = "s")
+roc_expl1.B <- roc(Y1test, b2_m$Y_pred.B, plot = TRUE,
+                    print.auc=TRUE)
+```
+
+#### Confusion matrix, recall, precision, F2
+
+```{r}
+expl1_bin_pred.B <- ifelse(b2_m$Y_pred.B > threshold.B, 1, 0)
+```
+
+```{r}
+# get confusion matrix 
+confusionMatrix(factor(expl1_bin_pred.B), factor(Y1test), positive = "1")
+```
+
+```{r}
+# get precision, recall and F2 beta score on test set
+Precision(y_pred=expl1_bin_pred.B, y_true=Y1test, positive="1")
+Recall(y_pred=expl1_bin_pred.B, y_true=Y1test, positive="1")
+F1_Score(y_pred=expl1_bin_pred.B, y_true=Y1test, positive="1")
+FBeta_Score(y_pred=expl1_bin_pred.B, y_true=Y1test, positive="1", beta=2)
+```
+
+## Alternative: Exploration rate to the XGBoost model directly
+
+### Add exploration rate 
+
+```{r}
+b2_m.expl2 <- b2_m
+
+# insert exploration rate 
+b2_m.expl2$Y_pred2.B <- 0
+
+# in a for loop
+set.seed(0841)
+for(i in 1:nrow(b2_m.expl2)) {
+  if (rbinom(n=1, size=1, prob=0.1) == 1) { 
+    b2_m.expl2$Y_pred2.B[i] = 1
+  } else {
+    b2_m.expl2$Y_pred2.B[i] = b2_m$XGB.B[i]
+  }
+}
+```
+
+```{r}
+# sanity check 
+summary(b2_m.expl2$Y_pred2.B)
+```
+
+### Evaluate performance 
+
+#### AUC-ROC 
+
+```{r}
+# plot roc curve
+par(pty = "s")
+roc_expl2.B <- roc(Y1test, b2_m.expl2$Y_pred2.B, plot = TRUE,
+                    print.auc=TRUE)
+```
+
+#### Confusion matrix, recall, precision, F2
+
+```{r}
+expl2_bin_pred.B <- ifelse(b2_m.expl2$Y_pred2.B > threshold.B, 1, 0)
+```
+
+```{r}
+# get confusion matrix 
+confusionMatrix(factor(expl2_bin_pred.B), factor(Y1test), positive = "1")
+```
+
+```{r}
+# get precision, recall and F2 beta score on test set
+Precision(y_pred=expl2_bin_pred.B, y_true=Y1test, positive="1")
+Recall(y_pred=expl2_bin_pred.B, y_true=Y1test, positive="1")
+F1_Score(y_pred=expl2_bin_pred.B, y_true=Y1test, positive="1")
+FBeta_Score(y_pred=expl2_bin_pred.B, y_true=Y1test, positive="1", beta=2)
+```
+

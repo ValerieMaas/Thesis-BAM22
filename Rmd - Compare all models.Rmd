@@ -1,0 +1,216 @@
+---
+title: "Compare all models"
+output: pdf_document
+date: '2022-06-14'
+---
+
+
+# =================== COMPARE ALL MODELS ON SIMULATED TEST SET =================== 
+
+## Evaluation of all models on simulated test test
+
+### AUC-ROC
+
+```{r}
+# roc objects 
+roc_manual.Y1 <- roc(Y1test, m)
+roc_XGB.Y1 <- roc(Y1test, df.out$Prediction_Score)
+roc_BMA.Y1 <- roc(Y1test, b1_m$BMA_prediction_CR)
+roc_expl1.Y1 <-roc(Y1test, b2_m$Y_pred.B)
+roc_expl2.Y1 <-roc(Y1test, b2_m.expl2$Y_pred2.B)
+
+# extract auc scores 
+auc(roc_manual.Y1)
+auc(roc_XGB.Y1)
+auc(roc_BMA.Y1)
+auc(roc_expl1.Y1)
+auc(roc_expl2.Y1)
+```
+
+
+```{r}
+#Plot the ROC curve for each model
+par(pty = "s")
+plot(roc_manual.Y1,main="ROC Comparison", col="blue")
+plot(roc_XGB.Y1, add=TRUE, col="red")
+plot(roc_BMA.Y1, add=TRUE, col="green")
+plot(roc_expl1.Y1, add=TRUE, col="yellow")
+plot(roc_expl2.Y1, add=TRUE, col="purple")
+#Add Legend to the plot that includes each model AUC score
+textos <- c("Manual","XGB","BMA","Exploration 1","Exploration 2")
+AUC <- c(roc_manual.Y1$auc, roc_XGB.Y1$auc, roc_BMA.Y1$auc, roc_expl1.Y1$auc, roc_expl2.Y1$auc)
+textos <- paste(textos)
+colors <- c("blue","red","green","yellow", "purple")
+
+par(xpd=TRUE)
+legend(-0.08,0.4, legend = textos, col = colors, bty="n", cex=1.2, lty=1, lwd=2,
+       title="Model")
+```
+
+### Recall, precision and F2
+
+```{r}
+# precision
+Precision(y_pred=m, y_true=Y1test, positive="1")
+Precision(y_pred=XGB_bin_pred, y_true=Y1test, positive="1")
+Precision(y_pred=BMA_bin_pred, y_true=Y1test, positive="1")
+Precision(y_pred=expl1_bin_pred.B, y_true=Y1test, positive="1")
+Precision(y_pred=expl2_bin_pred.B, y_true=Y1test, positive="1")
+
+# recall
+Recall(y_pred=m, y_true=Y1test, positive="1")
+Recall(y_pred=XGB_bin_pred, y_true=Y1test, positive="1")
+Recall(y_pred=BMA_bin_pred, y_true=Y1test, positive="1")
+Recall(y_pred=expl1_bin_pred.B, y_true=Y1test, positive="1")
+Recall(y_pred=expl2_bin_pred.B, y_true=Y1test, positive="1")
+
+
+# F2
+FBeta_Score(y_pred=m, y_true=Y1test, positive="1", beta=2)
+FBeta_Score(y_pred=XGB_bin_pred, y_true=Y1test, positive="1", beta=2)
+FBeta_Score(y_pred=BMA_bin_pred, y_true=Y1test, positive="1", beta=2)
+FBeta_Score(y_pred=expl1_bin_pred.B, y_true=Y1test, positive="1", beta=2)
+FBeta_Score(y_pred=expl2_bin_pred.B, y_true=Y1test, positive="1", beta=2)
+```
+
+### Conversion rate on 20% capacity 
+
+```{r}
+accs = account[Createddate>split]
+```
+
+```{r}
+# everything in one data frame 
+conversionRates <- merge(b1_m, b2_m) %>%
+  merge(b2_m.expl2)
+
+conversionRates <- cbind(conversionRates, accs)
+
+
+conversionRates <- conversionRates %>% select(id, Y1_act, Mpred, 
+                                              XGBpred, 
+                                              BMA_prediction_CR, 
+                                              Y_pred.B, 
+                                              Y_pred2.B,
+                                              accs)
+colnames(conversionRates) <- c('id','Y1_act','m_pred', 
+                               'XGB_pred', 
+                               'BMA_pred', 
+                               'exp1_pred', 
+                               'exp2_pred',
+                               'account')
+```
+
+```{r}
+# Manual model 
+# no probabilities so we sample ramdom predictions of 1
+set.seed(43720)
+conversionRates_m <- 
+  conversionRates[sample(which(conversionRates$m_pred == 1),
+                         (0.20*nrow(conversionRates))),]
+
+# number of converted leads
+sum(conversionRates_m$Y1_act) 
+```
+
+```{r}
+# XGB
+conversionRates_XGB <- conversionRates %>% 
+  arrange(desc(XGB_pred)) %>% 
+  slice_max(XGB_pred, prop=0.2)
+
+# number of converted leads
+sum(conversionRates_XGB$Y1_act) 
+```
+
+```{r}
+# BMA
+conversionRates_BMA <- conversionRates %>% 
+  arrange(desc(BMA_pred)) %>% 
+  slice_max(BMA_pred, prop=0.2)
+
+# number of converted leads
+sum(conversionRates_BMA$Y1_act) 
+```
+
+```{r}
+# Exploration 1
+conversionRates_expl1 <- conversionRates %>% 
+  arrange(desc(exp1_pred)) %>% 
+  slice_max(exp1_pred, prop=0.2)
+
+# number of converted leads
+sum(conversionRates_expl1$Y1_act) 
+```
+
+```{r}
+# Exploration 2
+conversionRates_expl2 <- conversionRates %>% 
+  arrange(desc(exp2_pred)) %>% 
+  slice_max(exp2_pred, prop=0.2)
+
+# number of converted leads
+sum(conversionRates_expl2$Y1_act) 
+```
+
+```{r}
+# create table 
+Model <- c("manual scoring", "XGB", "BMA", "Exploration1", "Exploration2")
+Contacted <- c(nrow(conversionRates_m), 
+               nrow(conversionRates_XGB), 
+               nrow(conversionRates_BMA),
+               nrow(conversionRates_expl1),
+               nrow(conversionRates_expl2)) 
+Converted <- c(sum(conversionRates_m$Y1_act), 
+               sum(conversionRates_XGB$Y1_act), 
+               sum(conversionRates_BMA$Y1_act),
+               sum(conversionRates_expl1$Y1_act),
+               sum(conversionRates_expl2$Y1_act))
+
+tbl.conversionRates <- data.frame(Model, Contacted, Converted)
+
+tbl.conversionRates <- tbl.conversionRates %>%
+  mutate("Conversion Rate" = (Converted/Contacted)) 
+tbl.conversionRates 
+```
+
+### Total average opportunity value based on conversion rate of top 20%
+
+```{r}
+avg_opp_value <- 79000
+```
+
+```{r}
+# total opportunity values
+value_m <- avg_opp_value*(n_distinct(conversionRates_m$account[conversionRates_m$Y1_act == 1]))
+value_XGB <- avg_opp_value*(n_distinct(conversionRates_XGB$account[conversionRates_XGB$Y1_act == 1]))
+value_BMA <- avg_opp_value*(n_distinct(conversionRates_BMA$account[conversionRates_BMA$Y1_act == 1]))
+value_expl1 <- avg_opp_value*(n_distinct(conversionRates_expl1$account[conversionRates_expl1$Y1_act == 1]))
+value_expl2 <- avg_opp_value*(n_distinct(conversionRates_expl2$account[conversionRates_expl2$Y1_act == 1]))
+```
+
+
+```{r}
+# total opportunity values
+value_m <- avg_opp_value*sum(conversionRates_m$Y1_act)
+value_XGB <- avg_opp_value*sum(conversionRates_XGB$Y1_act)
+value_BMA <- avg_opp_value*sum(conversionRates_BMA$Y1_act)
+value_expl1 <- avg_opp_value*sum(conversionRates_expl1$Y1_act)
+value_expl2 <- avg_opp_value*sum(conversionRates_expl2$Y1_act)
+```
+
+
+```{r}
+values <- c(value_m, value_XGB, value_BMA, value_expl1, value_expl2)
+```
+
+
+```{r}
+tbl.conversionRates$opportunity_values <- values
+```
+
+```{r}
+head(tbl.conversionRates)
+```
+
+

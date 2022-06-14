@@ -1,0 +1,173 @@
+---
+title: "Phase 2 BMA"
+output: pdf_document
+date: '2022-06-14'
+---
+
+# =================== PHASE 2 BMA ===================
+
+## Collect manual predictions 
+
+```{r}
+summary(factor(MQL))
+```
+
+```{r}
+# collecting MQL prediction of the leads of test set  
+# output manual model = m
+m = MQL[Createddate>split]
+
+# find distribution of classes
+summary(factor(m))
+```
+
+```{r}
+# collect both predictions and actual outcomes in one data frame
+b1_m <- df.out
+b1_m <- data.frame(id=as.integer(rownames(Xtest)),
+                   XGBpred=out,
+                   XGB_bin_pred=XGB_bin_pred,
+                   Mpred=m,
+                   Y_act=Ytest)
+```
+
+## Compare predictions
+
+```{r}
+# binary outputs 
+summary(factor(b1_m$Mpred))
+summary(factor(b1_m$XGB_bin_pred))
+```
+
+```{r}
+# cross tab for manual score and xgboost
+table(b1_m$XGB_bin_pred, b1_m$Mpred)
+
+prop.table(table(b1_m$XGB_bin_pred, b1_m$Mpred))
+```
+
+## Evaluate performance on test set 
+
+### ROC and AUC of the manual model 
+
+```{r}
+# plot roc curve 
+par(pty = "s")
+roc_manual <- roc(Ytest, m, plot = TRUE, print.auc=TRUE,
+                       col="brown2")
+```
+
+### Manual model confusion matrix 
+
+```{r}
+# Confuson matrix of manual score 
+confusionMatrix(factor(m), factor(Ytest),  positive = "1")
+
+# confusion matrix in percentages
+prop.table(caret::confusionMatrix(factor(m), factor(Ytest), positive="1")$table)
+```
+
+```{r}
+# get precision, recall and F2 beta score of manual lead scoring on test set
+Precision(y_pred=m, y_true=Ytest, positive="1")
+Recall(y_pred=m, y_true=Ytest, positive="1")
+F1_Score(y_pred=m, y_true=Ytest, positive="1")
+FBeta_Score(y_pred=m, y_true=Ytest, positive="1", beta=2)
+```
+
+### Conversion rates of manual and XGB
+
+```{r}
+# conversion rate
+# manual 
+manual_pred <- sum(b1_m$Mpred == 1)
+
+manual_conv <- sum(b1_m$Mpred == 1 & 
+                        b1_m$Y_act == 1)
+
+manual_conv_rate <- manual_conv/manual_pred
+manual_conv_rate
+```
+
+```{r}
+# conversion rate 
+# XGB
+XGB_pred <- sum(b1_m$XGB_bin_pred) 
+
+XGB_conv <- sum(b1_m$XGB_bin_pred == 1 & 
+                       b1_m$Y_act == 1)
+
+# conversion rate
+XGB_conv_rate <- XGB_conv/XGB_pred
+```
+
+```{r}
+# Conversion rates 
+Predictions <- c(manual_pred, XGB_pred)
+Converted <- c(manual_conv, XGB_conv)
+Conv_rates <- data.frame(Predictions, Converted)
+rownames(Conv_rates) <- c("Manual scoring", "XGB")
+
+Conv_rates <- Conv_rates %>%
+  mutate("Conversion Rate" = (Converted/Predictions))
+Conv_rates
+```
+
+## Determine weights based on conversion rates
+
+```{r}
+weight_Manual_CR <- manual_conv_rate/(manual_conv_rate + XGB_conv_rate)
+weight_XGB_CR <- XGB_conv_rate/(manual_conv_rate + XGB_conv_rate)
+
+# sanity check
+weight_Manual_CR 
+weight_XGB_CR
+weight_Manual_CR + weight_XGB_CR
+```
+
+## Get weighted predictions
+
+```{r}
+# Weighted prediction of the leads in Xtest
+# in a for loop
+for(i in 1:nrow(b1_m)) {
+  b1_m$BMA_prediction_CR[i] <- (weight_Manual_CR * b1_m$Mpred[i]) + 
+    (weight_XGB_CR * b1_m$XGBpred[i])
+}
+```
+
+```{r}
+# summary statistics of BMA predictions
+summary(b1_m$BMA_prediction_CR)
+```
+
+## Performance of the BMA model 
+
+### AUC-ROC
+
+```{r}
+# plot roc curve 
+par(pty = "s")
+roc_object_BMA_CR <- roc(Ytest, b1_m$BMA_prediction_CR, plot = TRUE, print.auc=TRUE,
+                       col="brown2")
+```
+
+### Confusion matrix, recall, precision, F2
+
+```{r}
+BMA_bin_pred <- ifelse(b1_m$BMA_prediction_CR > threshold, 1, 0)
+```
+
+```{r}
+# get confusion matrix 
+confusionMatrix(factor(BMA_bin_pred), factor(Ytest), positive = "1")
+```
+
+```{r}
+# get precision, recall and F2 beta score on test set
+Precision(y_pred=BMA_bin_pred, y_true=Ytest, positive="1")
+Recall(y_pred=BMA_bin_pred, y_true=Ytest, positive="1")
+F1_Score(y_pred=BMA_bin_pred, y_true=Ytest, positive="1")
+FBeta_Score(y_pred=BMA_bin_pred, y_true=Ytest, positive="1", beta=2)
+```
+
