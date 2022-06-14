@@ -7,7 +7,9 @@ Exludes data, data cleaning and exploration
 
 *  **Data exploration**: Splits training and test sets based on created date and computes summary statistics of each set. 
 
-*  **Phase 1 XGB**: Tunes, trains and tests the performance of the XGBoost model. Feature importance analyses for different feature combinations. 
+*  **Phase 1 XGB**: Tunes, trains and tests the performance of the XGBoost model. 
+
+*  **Phase 1 XGB Feature analyses**: Tunes, trains and tests performance of the XGBoost for various feature type combinations.
 
 *  **Phase 2 BMA**: Retrieves manual predictions and tests its performance on the test set. Averages the manual model with XGBoost and tests the performance of the BMA model on the test set. 
  
