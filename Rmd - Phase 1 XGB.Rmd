@@ -1,0 +1,256 @@
+---
+title: "Phase 1 XGB"
+output: pdf_document
+date: '2022-06-14'
+---
+
+# =================== PHASE 1 XGBoost ===================
+
+## Training set optimisation
+
+### Cross-validation
+
+```{r}
+CVerrors <- numeric(10)
+NROUNDS <- integer(10)
+```
+
+```{r}
+# set parameter values that will be constant 
+eta <- 0.01
+```
+
+```{r}
+registerDoParallel()
+```
+
+```{r}
+# use cv to select the correct hyperparameters
+# gamma, lambda, subsample, colsample_bytree and min_child_weight are default values
+
+# eta = set to 0.01
+# smaller values of shrinkage (almost) always give improved predictive performance
+# for 3,000 to 10,000 iterations with shrinkage rates between 0.01 and 0.001.
+
+# tuning for only tree depth and number of rounds
+for(depth in 1L:10L){ # tree depth 
+  mCV <- xgb.cv(data = Xtrain, 
+                label = Ytrain, 
+                params = list(eta=eta, # shrinkage parameter (learning rate) 
+                              max_depth=depth), # max number of tree splits/variables in one tree 
+                nrounds=10000000, # max number of trees 
+                objective = "binary:logistic",
+                eval_metric = "logloss",  # evaluation metric
+                nfold = 10, # k-folds 
+                early_stopping_rounds = 50, # algorithm stops if no more improvement
+                verbose = 0) # silent 
+  # calculate CVerror and number of rounds for each depth 
+  CVerrors[depth] <- min(mCV$evaluation_log$test_logloss_mean) 
+  NROUNDS[depth] <- mCV$best_iteration
+}
+```
+
+```{r}
+# plot 
+# training vs test errors
+cv_df <- data.frame(TRAINING_ERROR = mCV$evaluation_log$train_logloss_mean,
+                    VALIDATION_ERROR = mCV$evaluation_log$test_logloss_mean, 
+                    ITERATION = mCV$evaluation_log$iter) %>%
+  mutate(MIN = VALIDATION_ERROR == min(VALIDATION_ERROR))
+
+
+cv_df_longer <- pivot_longer(data = cv_df, 
+                              cols = c(TRAINING_ERROR, VALIDATION_ERROR), 
+                              names_to = "ERROR_TYPE",
+                              values_to = "ERROR")
+
+g_train_val_error <- ggplot(cv_df_longer, aes(x = ITERATION)) +        # Check for overfitting
+  geom_line(aes(y = ERROR, group = ERROR_TYPE, colour = ERROR_TYPE)) +
+  geom_vline(xintercept = mCV$best_iteration, colour = " dark blue") +
+
+  labs(
+    x = "CV Iterations",
+    y = "Log-loss validation error") +
+  scale_colour_discrete(name="Error type", 
+                        labels=c("Training error", "Validation error")) +
+  theme_classic() +
+  theme(legend.position="bottom")
+
+g_train_val_error
+```
+
+```{r}
+# select tuning parameters based on best iteration 
+best_d <- which.min(CVerrors) # choose depth for lowest cv error
+best_nrounds <- NROUNDS[best_d] # choose nrounds for lowest cv error
+```
+
+### Training the model 
+
+```{r}
+# Build the best model based on the cross validation error 
+best_model <- xgboost(data = Xtrain,
+             label = Ytrain,
+             params = list(eta=eta, 
+                           max_depth=best_d), #tuned
+             nrounds=ceiling(best_nrounds*1.1), # tuned
+             objective = "binary:logistic",
+             eval_metric = "logloss",
+             verbose = 0)
+```
+
+### Tune classification threshold on the training set
+
+```{r}
+# predictions on training set 
+training_predictions <- predict(best_model, Xtrain)
+summary(training_predictions)
+```
+
+```{r}
+# Precision 
+precision_score <- sapply(seq(0.01, 0.99, by=.01), function(thresh) Precision(Ytrain, 
+                    ifelse(training_predictions >= thresh, 1, 0), positive = 1))
+
+# Recall
+recall_score <- sapply(seq(0.01, 0.99, by=.01), function(thresh) Recall(Ytrain, 
+                    ifelse(training_predictions >= thresh, 1, 0), positive = 1))
+```
+
+```{r}
+# F1
+f1_scores <- sapply(seq(0.01, 0.99, by=.01), function(thresh) F1_Score(Ytrain, 
+                    ifelse(training_predictions >= thresh, 1, 0), positive = 1))
+ 
+which.max(f1_scores) 
+```
+
+```{r}
+# F2
+f_beta_scores2 <- sapply(seq(0.01, 0.99, by=.01), function(thresh) FBeta_Score(Ytrain, 
+                    ifelse(training_predictions >= thresh, 1, 0), 
+                    positive = 1, beta = 2))
+ 
+which.max(f_beta_scores2)
+```
+
+```{r}
+# F0.5
+f_beta_scores0.5 <- sapply(seq(0.01, 0.99, by=.01), function(thresh) FBeta_Score(Ytrain, 
+                    ifelse(training_predictions >= thresh, 1, 0), 
+                    positive = 1, beta = 0.5))
+ 
+which.max(f_beta_scores0.5)
+```
+
+```{r}
+# plot every threshold for training set
+# in one data frame
+f_scores.df <- as.data.frame(precision_score)
+f_scores.df$Recall <- recall_score
+f_scores.df$F1 <- f1_scores
+f_scores.df$F2 <- f_beta_scores2
+f_scores.df$F0.5 <- f_beta_scores0.5
+f_scores.df$threshold <- seq(0.01, 0.99, by=.01)
+f_scores.df <- f_scores.df %>% 
+  rename(
+    Precision = precision_score
+    )
+```
+
+```{r}
+f_scores.melt <- melt(data = f_scores.df, id.vars = "threshold")
+
+p1 <- ggplot(data = f_scores.melt, aes(x = threshold, y = value, colour = variable)) + 
+  geom_line() +
+  theme_classic() +
+  ylab("Value") + xlab("Classification threshold")+
+  theme(legend.title=element_text(size=20),
+        legend.text =element_text(size=15),
+        axis.title = element_text(size=20),
+        axis.text = element_text(size=15)) 
+
+update_labels(p1, list(colour="Metric"))
+  
+```
+
+#### Find F-scores on training set 
+
+```{r}
+Precision(Ytrain, 
+          ifelse(training_predictions >= (which.max(f_beta_scores2)/100), 1, 0), 
+          positive = "1")
+Recall(Ytrain, 
+       ifelse(training_predictions >= (which.max(f_beta_scores2)/100), 1, 0), 
+       positive = "1")
+F1_Score(Ytrain, 
+         ifelse(training_predictions >= (which.max(f_beta_scores2)/100), 1, 0), 
+         positive = "1")
+FBeta_Score(Ytrain, 
+            ifelse(training_predictions >= (which.max(f_beta_scores2)/100), 1, 0), 
+            positive = "1", beta=2)
+```
+
+#### Set classification threshold
+
+```{r}
+# based on maximised F2
+threshold <- which.max(f_beta_scores2)/100
+```
+
+## Test set performance
+
+### Predictions on test set 
+
+```{r}
+# Predict based on the best model 
+out <- predict(best_model, newdata = Xtest)
+
+# collecting the predictions in a dataframe 
+# prediction are the probability of the lead converting into a qualified opportunity (lead conversion rate)
+df.out <- data.frame(id=as.integer(rownames(Xtest)),Prediction_Score=out)
+
+# summary statistics of the predictions
+summary(df.out$Prediction_Score)
+
+# output = b1
+```
+
+### Evaluate performance on test set
+
+#### AUC-ROC
+
+```{r}
+# plot roc curve 
+par(pty = "s")
+roc_object_XGB <- roc(Ytest, df.out$Prediction_Score, plot = TRUE, print.auc=TRUE,
+                       col="brown2")
+```
+
+#### Confusion matrix, recall, precision, F2
+
+```{r}
+# get binary predictions 
+XGB_bin_pred <- ifelse(df.out$Prediction_Score > threshold, 1, 0)
+```
+
+```{r}
+# get confusion matrix 
+confusionMatrix(factor(XGB_bin_pred), factor(Ytest), positive = "1")
+```
+
+```{r}
+# confusion matrix in percentages
+prop.table(caret::confusionMatrix(factor(XGB_bin_pred), factor(Ytest), positive="1")$table)
+```
+
+```{r}
+# get precision, recall and F2 beta score on test set
+Precision(y_pred=XGB_bin_pred, y_true=Ytest, positive="1")
+Recall(y_pred=XGB_bin_pred, y_true=Ytest, positive="1")
+F1_Score(y_pred=XGB_bin_pred, y_true=Ytest, positive="1")
+FBeta_Score(y_pred=XGB_bin_pred, y_true=Ytest, positive="1", beta=2)
+```
+
+
+

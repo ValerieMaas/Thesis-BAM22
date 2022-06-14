@@ -1,0 +1,616 @@
+---
+title: "Feature analyses"
+output: pdf_document
+date: '2022-06-14'
+---
+
+## Feature importance analyses
+
+### All features 
+
+```{r}
+# Variable importance
+feature_importance <- xgb.importance(
+  feature_names = colnames(Xtrain), model = best_model) # extracts all important features
+
+head(feature_importance)
+
+xgb.ggplot.importance(feature_importance[1:5])+ # plot for 5 most important features
+  theme_classic() 
+```
+
+### Combinations of feature types
+
+```{r}
+# 1-97: online behavior 
+# 98-131: demographic 
+# 132-176: online behavior 
+# 177-201: demographic 
+# 202-478: platform data
+# 497-558: online behavior 
+
+# only considering demographics
+Xtrain2 <-Xtrain[,c(98:131,177:201)]
+Xtest2 <- Xtest[,c(98:131,177:201)]
+
+# only considering online behavior
+Xtrain3 <-Xtrain[,c(1:97,132:176,497:558)]
+Xtest3 <- Xtest[,c(1:97,132:176,497:558)]
+
+# only considering platform events
+Xtrain4 <-Xtrain[,c(202:478)]
+Xtest4 <- Xtest[,c(202:478)]
+
+# only considering demographics+online behavior
+Xtrain5 <-Xtrain[,-c(202:478)]
+Xtest5 <- Xtest[,-c(202:478)]
+
+# only considering online behavior+platforms events
+Xtrain6 <-Xtrain[,-c(98:131,177:201)]
+Xtest6 <- Xtest[,-c(98:131,177:201)]
+
+# only considering demographics+platforms events
+Xtrain7 <-Xtrain[,-c(1:97,132:176,497:558)]
+Xtest7 <- Xtest[,-c(1:97,132:176,497:558)]
+```
+
+#### Only demographic
+
+```{r}
+CVerrors2 <- numeric(10)
+NROUNDS2 <- integer(10)
+```
+
+```{r}
+# set parameter values that will be constant 
+eta <- 0.01
+```
+
+```{r}
+registerDoParallel()
+```
+
+```{r}
+# use cv to select the correct hyperparameters
+# gamma, lambda, subsample, colsample_bytree and min_child_weight are default values
+
+# eta = set to 0.01
+# smaller values of shrinkage (almost) always give improved predictive performance
+# for 3,000 to 10,000 iterations with shrinkage rates between 0.01 and 0.001.
+
+# tuning for only tree depth and number of rounds
+for(depth in 1L:10L){ # tree depth 
+  mCV.2 <- xgb.cv(data = Xtrain2, 
+                label = Ytrain, 
+                params = list(eta=eta, # shrinkage parameter (learning rate) 
+                              max_depth=depth), # max number of tree splits/variables in one tree 
+                nrounds=10000000, # max number of trees 
+                objective = "binary:logistic",
+                eval_metric = "logloss",  # evaluation metric
+                nfold = 10, # k-folds 
+                early_stopping_rounds = 50, # algorithm stops if no more improvement
+                verbose = 0) # silent 
+  # calculate CVerror and number of rounds for each depth 
+  CVerrors2[depth] <- min(mCV.2$evaluation_log$test_logloss_mean) 
+  NROUNDS2[depth] <- mCV.2$best_iteration
+}
+```
+
+
+```{r}
+# select tuning parameters based on best iteration 
+best_d2 <- which.min(CVerrors2) # choose depth for lowest cv error
+best_nrounds2 <- NROUNDS2[best_d2] # choose nrounds for lowest cv error
+```
+
+##### Training the model 
+
+```{r}
+# Build the best model based on the cross validation error 
+best_model.2 <- xgboost(data = Xtrain2,
+             label = Ytrain,
+             params = list(eta=eta, 
+                           max_depth=best_d2), #tuned
+             nrounds=ceiling(best_nrounds2*1.1), # tuned
+             objective = "binary:logistic",
+             eval_metric = "logloss",
+             verbose = 0)
+```
+
+```{r}
+# Predict based on the best model 
+out.2 <- predict(best_model.2, newdata = Xtest2)
+
+# collecting the predictions in a dataframe 
+# prediction are the probability of the lead converting into a qualified opportunity (lead conversion rate)
+df.out.2 <- data.frame(id=as.integer(rownames(Xtest2)),Prediction_Score2=out.2)
+```
+
+#### Only behaviour
+
+```{r}
+CVerrors3 <- numeric(10)
+NROUNDS3 <- integer(10)
+```
+
+```{r}
+# set parameter values that will be constant 
+eta <- 0.01
+```
+
+```{r}
+registerDoParallel()
+```
+
+```{r}
+# use cv to select the correct hyperparameters
+# gamma, lambda, subsample, colsample_bytree and min_child_weight are default values
+
+# eta = set to 0.01
+# smaller values of shrinkage (almost) always give improved predictive performance
+# for 3,000 to 10,000 iterations with shrinkage rates between 0.01 and 0.001.
+
+# tuning for only tree depth and number of rounds
+for(depth in 1L:10L){ # tree depth 
+  mCV.3 <- xgb.cv(data = Xtrain3, 
+                label = Ytrain, 
+                params = list(eta=eta, # shrinkage parameter (learning rate) 
+                              max_depth=depth), # max number of tree splits/variables in one tree 
+                nrounds=10000000, # max number of trees 
+                objective = "binary:logistic",
+                eval_metric = "logloss",  # evaluation metric
+                nfold = 10, # k-folds 
+                early_stopping_rounds = 50, # algorithm stops if no more improvement
+                verbose = 0) # silent 
+  # calculate CVerror and number of rounds for each depth 
+  CVerrors3[depth] <- min(mCV.3$evaluation_log$test_logloss_mean) 
+  NROUNDS3[depth] <- mCV.3$best_iteration
+}
+```
+
+
+```{r}
+# select tuning parameters based on best iteration 
+best_d3 <- which.min(CVerrors3) # choose depth for lowest cv error
+best_nrounds3 <- NROUNDS3[best_d3] # choose nrounds for lowest cv error
+```
+
+##### Training the model 
+
+```{r}
+# Build the best model based on the cross validation error 
+best_model.3 <- xgboost(data = Xtrain3,
+             label = Ytrain,
+             params = list(eta=eta, 
+                           max_depth=best_d3), #tuned
+             nrounds=ceiling(best_nrounds3*1.1), # tuned
+             objective = "binary:logistic",
+             eval_metric = "logloss",
+             verbose = 0)
+```
+
+```{r}
+# Predict based on the best model 
+out.3 <- predict(best_model.3, newdata = Xtest3)
+
+# collecting the predictions in a dataframe 
+# prediction are the probability of the lead converting into a qualified opportunity (lead conversion rate)
+df.out.3 <- data.frame(id=as.integer(rownames(Xtest3)),Prediction_Score3=out.3)
+```
+
+
+#### Only platform data 
+
+```{r}
+CVerrors4 <- numeric(10)
+NROUNDS4 <- integer(10)
+```
+
+```{r}
+# set parameter values that will be constant 
+eta <- 0.01
+```
+
+```{r}
+registerDoParallel()
+```
+
+```{r}
+# use cv to select the correct hyperparameters
+# gamma, lambda, subsample, colsample_bytree and min_child_weight are default values
+
+# eta = set to 0.01
+# smaller values of shrinkage (almost) always give improved predictive performance
+# for 3,000 to 10,000 iterations with shrinkage rates between 0.01 and 0.001.
+
+# tuning for only tree depth and number of rounds
+for(depth in 1L:10L){ # tree depth 
+  mCV.4 <- xgb.cv(data = Xtrain4, 
+                label = Ytrain, 
+                params = list(eta=eta, # shrinkage parameter (learning rate) 
+                              max_depth=depth), # max number of tree splits/variables in one tree 
+                nrounds=10000000, # max number of trees 
+                objective = "binary:logistic",
+                eval_metric = "logloss",  # evaluation metric
+                nfold = 10, # k-folds 
+                early_stopping_rounds = 50, # algorithm stops if no more improvement
+                verbose = 0) # silent 
+  # calculate CVerror and number of rounds for each depth 
+  CVerrors4[depth] <- min(mCV.4$evaluation_log$test_logloss_mean) 
+  NROUNDS4[depth] <- mCV.4$best_iteration
+}
+```
+
+
+```{r}
+# select tuning parameters based on best iteration 
+best_d4 <- which.min(CVerrors4) # choose depth for lowest cv error
+best_nrounds4 <- NROUNDS4[best_d4] # choose nrounds for lowest cv error
+```
+
+##### Training the model 
+
+```{r}
+# Build the best model based on the cross validation error 
+best_model.4 <- xgboost(data = Xtrain4,
+             label = Ytrain,
+             params = list(eta=eta, 
+                           max_depth=best_d4), #tuned
+             nrounds=ceiling(best_nrounds4*1.1), # tuned
+             objective = "binary:logistic",
+             eval_metric = "logloss",
+             verbose = 0)
+```
+
+```{r}
+# Predict based on the best model 
+out.4 <- predict(best_model.4, newdata = Xtest4)
+
+# collecting the predictions in a dataframe 
+# prediction are the probability of the lead converting into a qualified opportunity (lead conversion rate)
+df.out.4 <- data.frame(id=as.integer(rownames(Xtest4)),Prediction_Score4=out.4)
+```
+
+#### Demographics+online activity
+
+```{r}
+CVerrors5 <- numeric(10)
+NROUNDS5 <- integer(10)
+```
+
+```{r}
+# set parameter values that will be constant 
+eta <- 0.01
+```
+
+```{r}
+registerDoParallel()
+```
+
+```{r}
+# use cv to select the correct hyperparameters
+# gamma, lambda, subsample, colsample_bytree and min_child_weight are default values
+
+# eta = set to 0.01
+# smaller values of shrinkage (almost) always give improved predictive performance
+# for 3,000 to 10,000 iterations with shrinkage rates between 0.01 and 0.001.
+
+# tuning for only tree depth and number of rounds
+for(depth in 1L:10L){ # tree depth 
+  mCV.5 <- xgb.cv(data = Xtrain5, 
+                label = Ytrain, 
+                params = list(eta=eta, # shrinkage parameter (learning rate) 
+                              max_depth=depth), # max number of tree splits/variables in one tree 
+                nrounds=10000000, # max number of trees 
+                objective = "binary:logistic",
+                eval_metric = "logloss",  # evaluation metric
+                nfold = 10, # k-folds 
+                early_stopping_rounds = 50, # algorithm stops if no more improvement
+                verbose = 0) # silent 
+  # calculate CVerror and number of rounds for each depth 
+  CVerrors5[depth] <- min(mCV.5$evaluation_log$test_logloss_mean) 
+  NROUNDS5[depth] <- mCV.5$best_iteration
+}
+```
+
+
+```{r}
+# select tuning parameters based on best iteration 
+best_d5 <- which.min(CVerrors5) # choose depth for lowest cv error
+best_nrounds5 <- NROUNDS5[best_d5] # choose nrounds for lowest cv error
+```
+
+##### Training the model 
+
+```{r}
+# Build the best model based on the cross validation error 
+best_model.5 <- xgboost(data = Xtrain5,
+             label = Ytrain,
+             params = list(eta=eta, 
+                           max_depth=best_d5), #tuned
+             nrounds=ceiling(best_nrounds5*1.1), # tuned
+             objective = "binary:logistic",
+             eval_metric = "logloss",
+             verbose = 0)
+```
+
+```{r}
+# Predict based on the best model 
+out.5 <- predict(best_model.5, newdata = Xtest5)
+
+# collecting the predictions in a dataframe 
+# prediction are the probability of the lead converting into a qualified opportunity (lead conversion rate)
+df.out.5 <- data.frame(id=as.integer(rownames(Xtest5)),Prediction_Score5=out.5)
+```
+
+#### Online behavior+platforms events
+
+```{r}
+CVerrors6 <- numeric(10)
+NROUNDS6 <- integer(10)
+```
+
+```{r}
+# set parameter values that will be constant 
+eta <- 0.01
+```
+
+```{r}
+registerDoParallel()
+```
+
+```{r}
+# use cv to select the correct hyperparameters
+# gamma, lambda, subsample, colsample_bytree and min_child_weight are default values
+
+# eta = set to 0.01
+# smaller values of shrinkage (almost) always give improved predictive performance
+# for 3,000 to 10,000 iterations with shrinkage rates between 0.01 and 0.001.
+
+# tuning for only tree depth and number of rounds
+for(depth in 1L:10L){ # tree depth 
+  mCV.6 <- xgb.cv(data = Xtrain6, 
+                label = Ytrain, 
+                params = list(eta=eta, # shrinkage parameter (learning rate) 
+                              max_depth=depth), # max number of tree splits/variables in one tree 
+                nrounds=10000000, # max number of trees 
+                objective = "binary:logistic",
+                eval_metric = "logloss",  # evaluation metric
+                nfold = 10, # k-folds 
+                early_stopping_rounds = 50, # algorithm stops if no more improvement
+                verbose = 0) # silent 
+  # calculate CVerror and number of rounds for each depth 
+  CVerrors6[depth] <- min(mCV.6$evaluation_log$test_logloss_mean) 
+  NROUNDS6[depth] <- mCV.6$best_iteration
+}
+```
+
+
+```{r}
+# select tuning parameters based on best iteration 
+best_d6 <- which.min(CVerrors6) # choose depth for lowest cv error
+best_nrounds6 <- NROUNDS6[best_d6] # choose nrounds for lowest cv error
+```
+
+##### Training the model 
+
+```{r}
+# Build the best model based on the cross validation error 
+best_model.6 <- xgboost(data = Xtrain6,
+             label = Ytrain,
+             params = list(eta=eta, 
+                           max_depth=best_d6), #tuned
+             nrounds=ceiling(best_nrounds6*1.1), # tuned
+             objective = "binary:logistic",
+             eval_metric = "logloss",
+             verbose = 0)
+```
+
+```{r}
+# Predict based on the best model 
+out.6 <- predict(best_model.6, newdata = Xtest6)
+
+# collecting the predictions in a dataframe 
+# prediction are the probability of the lead converting into a qualified opportunity (lead conversion rate)
+df.out.6 <- data.frame(id=as.integer(rownames(Xtest6)),Prediction_Score6=out.6)
+```
+
+#### Demographics+platforms events
+
+```{r}
+CVerrors7 <- numeric(10)
+NROUNDS7 <- integer(10)
+```
+
+```{r}
+# set parameter values that will be constant 
+eta <- 0.01
+```
+
+```{r}
+registerDoParallel()
+```
+
+```{r}
+# use cv to select the correct hyperparameters
+# gamma, lambda, subsample, colsample_bytree and min_child_weight are default values
+
+# eta = set to 0.01
+# smaller values of shrinkage (almost) always give improved predictive performance
+# for 3,000 to 10,000 iterations with shrinkage rates between 0.01 and 0.001.
+
+# tuning for only tree depth and number of rounds
+for(depth in 1L:10L){ # tree depth 
+  mCV.7 <- xgb.cv(data = Xtrain7, 
+                label = Ytrain, 
+                params = list(eta=eta, # shrinkage parameter (learning rate) 
+                              max_depth=depth), # max number of tree splits/variables in one tree 
+                nrounds=10000000, # max number of trees 
+                objective = "binary:logistic",
+                eval_metric = "logloss",  # evaluation metric
+                nfold = 10, # k-folds 
+                early_stopping_rounds = 50, # algorithm stops if no more improvement
+                verbose = 0) # silent 
+  # calculate CVerror and number of rounds for each depth 
+  CVerrors7[depth] <- min(mCV.7$evaluation_log$test_logloss_mean) 
+  NROUNDS7[depth] <- mCV.7$best_iteration
+}
+```
+
+
+```{r}
+# select tuning parameters based on best iteration 
+best_d7 <- which.min(CVerrors7) # choose depth for lowest cv error
+best_nrounds7 <- NROUNDS7[best_d7] # choose nrounds for lowest cv error
+```
+
+##### Training the model 
+
+```{r}
+# Build the best model based on the cross validation error 
+best_model.7 <- xgboost(data = Xtrain7,
+             label = Ytrain,
+             params = list(eta=eta, 
+                           max_depth=best_d7), #tuned
+             nrounds=ceiling(best_nrounds7*1.1), # tuned
+             objective = "binary:logistic",
+             eval_metric = "logloss",
+             verbose = 0)
+```
+
+```{r}
+# Predict based on the best model 
+out.7 <- predict(best_model.7, newdata = Xtest7)
+
+# collecting the predictions in a dataframe 
+# prediction are the probability of the lead converting into a qualified opportunity (lead conversion rate)
+df.out.7 <- data.frame(id=as.integer(rownames(Xtest7)),Prediction_Score7=out.7)
+```
+
+
+#### ROCs 
+
+```{r}
+roc_2 <- roc(Ytest, df.out.2$Prediction_Score2)
+roc_3 <- roc(Ytest, df.out.3$Prediction_Score3)
+roc_4 <- roc(Ytest, df.out.4$Prediction_Score4)
+roc_5 <- roc(Ytest, df.out.5$Prediction_Score5)
+roc_6 <- roc(Ytest, df.out.6$Prediction_Score6)
+roc_7 <- roc(Ytest, df.out.7$Prediction_Score7)
+```
+```{r}
+roc_2$auc
+roc_3$auc
+roc_4$auc
+roc_5$auc
+roc_6$auc
+roc_7$auc
+```
+
+
+```{r}
+#Plot the ROC curve for each model
+par(pty = "s")
+plot(roc_2,main="ROC Comparison", col="goldenrod")
+plot(roc_3, add=TRUE, col="red")
+plot(roc_4, add=TRUE, col="cornflowerblue")
+plot(roc_5, add=TRUE, col="turquoise")
+plot(roc_6, add=TRUE, col="blue")
+plot(roc_7, add=TRUE, col="salmon")
+textos <- c("D","B","P","DB",
+            "BP", "DP")
+textos <- paste(textos)
+colors <- c("goldenrod","red","cornflowerblue","turquoise", "blue", "salmon")
+par(xpd=TRUE)
+legend(-0.08,0.6, legend = textos, col = colors, bty="n", cex=1.5, lty=1, lwd=2,
+       title="Model")
+```
+
+#### F2-scores 
+
+##### On training set
+
+```{r}
+# predictions on training set 
+training_predictions2 <- predict(best_model.2, Xtrain2)
+summary(training_predictions2)
+
+training_predictions3 <- predict(best_model.3, Xtrain3)
+summary(training_predictions3)
+
+training_predictions4 <- predict(best_model.4, Xtrain4)
+summary(training_predictions4)
+
+training_predictions5 <- predict(best_model.5, Xtrain5)
+summary(training_predictions5)
+
+training_predictions6 <- predict(best_model.6, Xtrain6)
+summary(training_predictions6)
+
+training_predictions7 <- predict(best_model.7, Xtrain7)
+summary(training_predictions7)
+```
+
+```{r}
+# F2
+f_beta_scores2 <- sapply(seq(0.01, 0.99, by=.01), function(thresh) FBeta_Score(Ytrain, 
+                    ifelse(training_predictions2 >= thresh, 1, 0), 
+                    positive = 1, beta = 2))
+ 
+f_beta_scores3 <- sapply(seq(0.01, 0.99, by=.01), function(thresh) FBeta_Score(Ytrain, 
+                    ifelse(training_predictions3 >= thresh, 1, 0), 
+                    positive = 1, beta = 2))
+
+f_beta_scores4 <- sapply(seq(0.01, 0.99, by=.01), function(thresh) FBeta_Score(Ytrain, 
+                    ifelse(training_predictions4 >= thresh, 1, 0), 
+                    positive = 1, beta = 2))
+
+f_beta_scores5 <- sapply(seq(0.01, 0.99, by=.01), function(thresh) FBeta_Score(Ytrain, 
+                    ifelse(training_predictions5 >= thresh, 1, 0), 
+                    positive = 1, beta = 2))
+
+f_beta_scores6 <- sapply(seq(0.01, 0.99, by=.01), function(thresh) FBeta_Score(Ytrain, 
+                    ifelse(training_predictions6 >= thresh, 1, 0), 
+                    positive = 1, beta = 2))
+
+f_beta_scores7 <- sapply(seq(0.01, 0.99, by=.01), function(thresh) FBeta_Score(Ytrain, 
+                    ifelse(training_predictions7 >= thresh, 1, 0), 
+                    positive = 1, beta = 2))
+```
+
+
+##### Set classification threshold
+
+```{r}
+# based on maximised F2
+threshold2 <- which.max(f_beta_scores2)/100
+threshold3 <- which.max(f_beta_scores3)/100
+threshold4 <- which.max(f_beta_scores4)/100
+threshold5 <- which.max(f_beta_scores5)/100
+threshold6 <- which.max(f_beta_scores6)/100
+threshold7 <- which.max(f_beta_scores7)/100
+```
+
+##### Obtain F2-scores on test set
+
+```{r}
+# get binary predictions 
+XGB_bin_pred2 <- ifelse(df.out.2$Prediction_Score2 > threshold2, 1, 0)
+XGB_bin_pred3 <- ifelse(df.out.3$Prediction_Score3 > threshold3, 1, 0)
+XGB_bin_pred4 <- ifelse(df.out.4$Prediction_Score4 > threshold4, 1, 0)
+XGB_bin_pred5 <- ifelse(df.out.5$Prediction_Score5 > threshold5, 1, 0)
+XGB_bin_pred6 <- ifelse(df.out.6$Prediction_Score6 > threshold6, 1, 0)
+XGB_bin_pred7 <- ifelse(df.out.7$Prediction_Score7 > threshold7, 1, 0)
+```
+
+```{r}
+FBeta_Score(y_pred=XGB_bin_pred2, y_true=Ytest, positive="1", beta=2)
+FBeta_Score(y_pred=XGB_bin_pred3, y_true=Ytest, positive="1", beta=2)
+FBeta_Score(y_pred=XGB_bin_pred4, y_true=Ytest, positive="1", beta=2)
+FBeta_Score(y_pred=XGB_bin_pred5, y_true=Ytest, positive="1", beta=2)
+FBeta_Score(y_pred=XGB_bin_pred6, y_true=Ytest, positive="1", beta=2)
+FBeta_Score(y_pred=XGB_bin_pred7, y_true=Ytest, positive="1", beta=2)
+```
+
+
+
