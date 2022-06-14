@@ -1,0 +1,90 @@
+---
+title: "Simulated data"
+output: pdf_document
+date: '2022-06-14'
+---
+
+## Data 
+
+### Create simulated data Y1
+
+```{r}
+# Ouput vector Y is transformed in Y1 with some extra 1s based on a feature 
+# The observations that with the 10% highest values of wm_preview_started (chosen arbitrarily) are 
+# converted from 0 to 1
+
+# original distribution of Y
+summary(factor(Y))
+
+# observations given wm_preview_started > 0
+sum(X[,283] > 0)
+
+# distribution of Y given wm_preview_started > 0
+summary(factor(Y)[X[,283] > 0])
+
+# convert observations Y=0 given wm_preview_started > 0 to 1
+conditionMetIdx = X[,283] > 0
+Y1 = Y
+Y1[conditionMetIdx] = 1
+
+# sanity check 
+summary(factor(Y1))
+```
+
+### Train and test split 
+
+```{r}
+# Split Y1 in train and test set 
+Y1train = Y1[Createddate<=split]
+Y1test = Y1[Createddate>split]
+```
+
+Results are 6 different data sets - Xtrain, Xtest, Ytrain, Ytest, Y1train and Ytest 
+
+### Data exploration
+
+```{r}
+summary(factor(Ytrain))
+summary(factor(Y1train))
+
+summary(factor(Ytest))
+summary(factor(Y1test))
+```
+
+```{r}
+# summary statistics of training and testing 
+summary(Y1train)
+summary(Y1test)
+
+
+# sd
+sd(Y1train)
+sd(Y1test)
+
+# diff:
+mean(Y1train)-mean(Y1test)
+
+# standard error of the mean
+stderror <- function(x) sd(x)/sqrt(length(x))
+stderror(Y1train)
+stderror(Y1test)
+```
+
+```{r}
+# Difference between training and testing set
+
+# the null hypothesis (H0) is that there is no difference between the two means
+# An “alternative hypothesis” (H1) is that there is a difference between the two means
+
+# Wilcoxon test 
+wilcox.test(Y1train,Y1test, alternative = "two.sided")
+# does not assume normal distribution 
+# not statistically significant, failed to reject null hypothesis
+# no difference between the two means 
+
+# t-test
+stats::t.test(Y1train,Y1test)
+# generally assumes normal distribution but it has been shown that t-test can tolerate deviations from normality when two distributions are moderarely skewed in the same direction 
+# not statistically significant, failed to reject null hypothesis
+# no difference between the two means 
+```
